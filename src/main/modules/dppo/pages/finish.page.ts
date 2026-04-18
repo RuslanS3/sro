@@ -131,19 +131,64 @@ export class FinishPage extends DppoBasePage {
     await dismissCookieBanner(this.page);
     const beforeUrl = this.page.url();
     const beforeTitle = await this.page.title().catch(() => '');
+    const waitForTransition = async (): Promise<boolean> => {
+      await this.page
+        .waitForFunction(
+          (prev) => {
+            const hasRepresentativeInput = !!document.getElementById('frm:s_zast_prijmeni:i_vstup:zast_prijmeni');
+            return (
+              window.location.href !== prev.url ||
+              document.title !== prev.title ||
+              hasRepresentativeInput
+            );
+          },
+          { url: beforeUrl, title: beforeTitle },
+          { timeout: 6_000 }
+        )
+        .catch(() => undefined);
+
+      const afterUrl = this.page.url();
+      const afterTitle = await this.page.title().catch(() => '');
+      const hasRepresentativeInput = await this.page
+        .locator('#frm\\:s_zast_prijmeni\\:i_vstup\\:zast_prijmeni')
+        .first()
+        .isVisible()
+        .catch(() => false);
+
+      return afterUrl !== beforeUrl || afterTitle !== beforeTitle || hasRepresentativeInput;
+    };
 
     if (error.linkId) {
       const safeId = error.linkId.replace(/"/g, '\\"');
       const byId = this.page.locator(`[id="${safeId}"]`).first();
       if (await byId.isVisible().catch(() => false)) {
         await byId.click({ force: true }).catch(() => undefined);
+        if (await waitForTransition()) {
+          return true;
+        }
+      }
+
+      // JSF fallback: trigger the exact form submit command used by onclick="oamSubmitForm('frm','<linkId>')"
+      await this.page
+        .evaluate((linkId) => {
+          const w = window as unknown as { oamSubmitForm?: (formId: string, command: string) => boolean };
+          if (typeof w.oamSubmitForm === 'function') {
+            w.oamSubmitForm('frm', linkId);
+          }
+        }, error.linkId)
+        .catch(() => undefined);
+      if (await waitForTransition()) {
+        return true;
       }
     }
 
-    if (this.page.url() === beforeUrl) {
+    if (this.page.url() === beforeUrl && (await this.page.title().catch(() => '')) === beforeTitle) {
       const row = this.page.locator('tr', { hasText: error.message }).first();
       if (await row.isVisible().catch(() => false)) {
         await row.click({ force: true }).catch(() => undefined);
+        if (await waitForTransition()) {
+          return true;
+        }
       }
     }
 

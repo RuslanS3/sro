@@ -54,6 +54,13 @@ export abstract class DppoBasePage {
     } catch {
       await select.selectOption(valueOrLabel);
     }
+    await select.evaluate((el) => {
+      const element = el as HTMLSelectElement;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+      element.blur();
+    }).catch(() => undefined);
+    await this.page.waitForTimeout(250);
   }
 
   protected async safeClickByValue(value: string): Promise<void> {
