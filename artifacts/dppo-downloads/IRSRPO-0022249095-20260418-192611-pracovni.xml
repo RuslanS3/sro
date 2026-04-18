@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Pisemnost nazevSW="EPO MF ČR" verzeSW="48.4.1">
+<IRSRPO verzePis="02.02">
+<VetaD k_uladis="IRS" dokument="RPO" c_ufo_cil="451" />
+<VetaP dic="22249095" zast_typ="F" opr_postaveni="statutární orgán" rod_c="22249095" zkrobchjm="Raw Studio s.r.o." typ_ds="P" c_pracufo="2008" />
+<VetaR c_ufo="451" drp_770="A" pod_misto="Praze                                           " pod_datum="18.04.2026" reg_zmena="R" naz_ufo="FÚ HLAVNÍ MĚSTO PRAHA                        " />
+<VetaS obchjm="Raw Studio s.r.o." ico="22249095" opravneni_cr="A" />
+<VetaN d_zahajeni="11.11.2024" pocet_odzav="0" pocet_provoz="0" poradi="1" />
+<VetaAS typ_adr="S" naz_ul="Kaprova" c_dom="42    " c_orient="14  " naz_obce="PRAHA 1" psc="11000     " id_xml="3" poradi="0" c_obce="500054" />
+</IRSRPO>
+</Pisemnost>
