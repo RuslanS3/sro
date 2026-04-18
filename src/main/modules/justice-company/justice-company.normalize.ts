@@ -39,10 +39,10 @@ function parseNamedPersons(text?: string): Person[] {
     return [];
   }
 
-  const normalized = text.replace(/\r/g, '').replace(/\s{2,}/g, ' ');
+  const normalized = text.replace(/\r/g, '');
   const matches = Array.from(normalized.matchAll(/([A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ\- ]{2,}),\s*dat\.\s*nar\.\s*([^\n,]+)([\s\S]*?)(?=[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ\- ]{2,},\s*dat\.\s*nar\.|$)/g));
 
-  return matches.map((match) => {
+  const strictPeople = matches.map((match) => {
     const fullName = match[1].trim();
     const birthDate = match[2].trim();
     const tail = match[3]?.trim() ?? '';
@@ -64,6 +64,62 @@ function parseNamedPersons(text?: string): Person[] {
       function_start_date: functionStartDate
     };
   });
+
+  if (strictPeople.length > 0) {
+    return strictPeople;
+  }
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const isLikelyName = (line: string): boolean => {
+    if (/^(jednatel|člen|předseda|společník)\s*:$/i.test(line)) {
+      return false;
+    }
+
+    if (/den vzniku funkce|dat\.\s*nar\./i.test(line)) {
+      return false;
+    }
+
+    if (!/^[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ'`\- ]+$/.test(line)) {
+      return false;
+    }
+
+    return line.split(/\s+/).length >= 2;
+  };
+
+  const isLikelyAddress = (line?: string): boolean => {
+    if (!line) {
+      return false;
+    }
+
+    return /\d|,|ukrajina|republika|praha|brno|ostrava|plzeň|boscoreale/i.test(line);
+  };
+
+  const fallbackPeople: Person[] = [];
+  const globalFunctionStartDate = normalized.match(/Den vzniku funkce:\s*([^\n]+)/i)?.[1]?.trim();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isLikelyName(line)) {
+      continue;
+    }
+
+    const nameParts = splitName(line);
+    const next = lines[index + 1];
+
+    fallbackPeople.push({
+      full_name: line,
+      first_name: nameParts.first_name,
+      last_name: nameParts.last_name,
+      address: isLikelyAddress(next) ? splitAddress(next) : undefined,
+      function_start_date: globalFunctionStartDate
+    });
+  }
+
+  return fallbackPeople;
 }
 
 function parseShareholders(shareholdersText?: string, shareText?: string): Shareholder[] {

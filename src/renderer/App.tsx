@@ -17,6 +17,8 @@ type DppoFormState = {
   registration_from_date: string;
   business_authorization: string;
   expected_tax: string;
+  signatory_last_name: string;
+  signatory_first_name: string;
   signatory_birth_date: string;
 };
 
@@ -95,7 +97,47 @@ function initialDppoForm(): DppoFormState {
     registration_from_date: toTodayCzDate(),
     business_authorization: 'vydáno v ČR',
     expected_tax: '3000000',
+    signatory_last_name: '',
+    signatory_first_name: '',
     signatory_birth_date: ''
+  };
+}
+
+function splitFullName(fullName?: string): { first: string; last: string } {
+  const clean = (fullName ?? '').trim();
+  if (!clean) {
+    return { first: '', last: '' };
+  }
+
+  const parts = clean.split(/\s+/);
+  if (parts.length === 1) {
+    return { first: parts[0], last: '' };
+  }
+
+  return { first: parts[0], last: parts.slice(1).join(' ') };
+}
+
+function resolveSignatoryFromNormalized(result: GetCompanyByIcoResult): {
+  first: string;
+  last: string;
+  birthDate?: string;
+} {
+  if (result.status !== 'success') {
+    return { first: '', last: '' };
+  }
+
+  const statutory = result.normalizedData.statutory_body.persons[0];
+  const shareholder = result.normalizedData.shareholders[0];
+  const source = statutory ?? shareholder;
+  if (!source) {
+    return { first: '', last: '' };
+  }
+
+  const split = splitFullName(source.full_name);
+  return {
+    first: source.first_name || split.first,
+    last: source.last_name || split.last,
+    birthDate: source.birth_date
   };
 }
 
@@ -142,11 +184,15 @@ export function App(): JSX.Element {
       return;
     }
 
+    const signatory = resolveSignatoryFromNormalized(result);
+
     setDppoForm((prev) => ({
       ...prev,
       registration_from_date: normalizeCzDate(result.normalizedData.registration_date),
       submission_date: prev.submission_date || toTodayCzDate(),
-      signatory_birth_date: normalizeCzDate(result.normalizedData.statutory_body.persons[0]?.birth_date)
+      signatory_first_name: signatory.first,
+      signatory_last_name: signatory.last,
+      signatory_birth_date: normalizeCzDate(signatory.birthDate)
     }));
   }, [result]);
 
@@ -175,7 +221,7 @@ export function App(): JSX.Element {
       return null;
     }
 
-    const mainPerson = result.normalizedData.statutory_body.persons[0];
+    const mainPerson = result.normalizedData.statutory_body.persons[0] ?? result.normalizedData.shareholders[0];
 
     return {
       companyName: result.normalizedData.company_name,
@@ -191,7 +237,15 @@ export function App(): JSX.Element {
     }
 
     const n = result.normalizedData;
-    const signatory = n.statutory_body.persons[0];
+    const signatoryFirstName = dppoForm.signatory_first_name.trim();
+    const signatoryLastName = dppoForm.signatory_last_name.trim();
+    if (!signatoryFirstName || !signatoryLastName) {
+      setDppoResult({
+        status: 'error',
+        message: 'Signatory first and last name are required before DPPO run.'
+      });
+      return;
+    }
 
     const payload: DppoPayload = {
       route: 'dppo',
@@ -210,8 +264,8 @@ export function App(): JSX.Element {
         city_input: n.address?.city ?? '',
         zip: n.address?.zip ?? '',
         country_label: n.address?.country ?? 'Česká republika',
-        signatory_last_name: signatory?.last_name ?? '',
-        signatory_first_name: signatory?.first_name ?? '',
+        signatory_last_name: signatoryLastName,
+        signatory_first_name: signatoryFirstName,
         signatory_birth_date: dppoForm.signatory_birth_date || undefined,
         signatory_relationship: 'statutární orgán',
         business_start_date: dppoForm.registration_from_date,
@@ -412,6 +466,24 @@ export function App(): JSX.Element {
               type="text"
               value={dppoForm.expected_tax}
               onChange={(e) => setDppoForm((p) => ({ ...p, expected_tax: e.target.value }))}
+              disabled={isDppoLoading}
+            />
+          </label>
+          <label>
+            Signatory last name
+            <input
+              type="text"
+              value={dppoForm.signatory_last_name}
+              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_last_name: e.target.value }))}
+              disabled={isDppoLoading}
+            />
+          </label>
+          <label>
+            Signatory first name
+            <input
+              type="text"
+              value={dppoForm.signatory_first_name}
+              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_first_name: e.target.value }))}
               disabled={isDppoLoading}
             />
           </label>

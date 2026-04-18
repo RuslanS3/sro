@@ -144,6 +144,13 @@ export async function generateDppoXml(
   options: GenerateDppoXmlOptions = {},
   logger: DppoLogger = new ConsoleDppoLogger()
 ): Promise<GenerateDppoXmlResult> {
+  if (!payload.data.signatory_first_name?.trim() || !payload.data.signatory_last_name?.trim()) {
+    return {
+      status: 'error',
+      message: 'Representative first name and last name are required for EPO (Daňový subjekt).'
+    };
+  }
+
   const downloadDir = options.downloadDir ?? defaultDownloadDir(payload);
   ensureDir(downloadDir);
 
