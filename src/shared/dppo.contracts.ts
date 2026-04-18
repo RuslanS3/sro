@@ -19,6 +19,10 @@ export type DppoPayload = {
     signatory_first_name: string;
     signatory_birth_date?: string;
     signatory_relationship: string;
+    signer_mode?: 'authorized_person_for_legal_entity' | 'different_signer';
+    signer_person_type?: 'physical' | 'legal';
+    signer_code?: string;
+    signer_birth_date?: string;
     business_start_date: string;
     business_authorization: string;
     expected_tax?: string;

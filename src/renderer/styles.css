@@ -76,6 +76,104 @@ button:disabled {
   margin-top: 12px;
   color: #1e3d30;
   font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.progress-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.progress-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #2d6a4f;
+  box-shadow: 0 0 0 0 #2d6a4f80;
+  animation: pulse-dot 1.4s infinite ease-out;
+}
+
+.progress-message {
+  margin: 0;
+  color: #355348;
+}
+
+.progress-track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: #d9e7e0;
+  overflow: hidden;
+}
+
+.progress-track.done {
+  background: #2d6a4f33;
+}
+
+.progress-shimmer {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent 0%, #2d6a4fb8 45%, transparent 100%);
+  animation: progress-slide 1.3s linear infinite;
+}
+
+.progress-track.done .progress-shimmer {
+  width: 100%;
+  animation: none;
+  background: #2d6a4f;
+}
+
+.progress-steps {
+  display: grid;
+  gap: 6px;
+}
+
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #3f5a50;
+  font-size: 14px;
+}
+
+.progress-step-bullet {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #9cb8ab;
+}
+
+.progress-step-bullet.active {
+  background: #2d6a4f;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 #2d6a4f80;
+  }
+  70% {
+    box-shadow: 0 0 0 10px #2d6a4f00;
+  }
+  100% {
+    box-shadow: 0 0 0 0 #2d6a4f00;
+  }
 }
 
 ul {
@@ -100,6 +198,14 @@ li {
 
 .preview-grid strong {
   font-size: 16px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.secondary-btn {
+  background: #e7efe9;
+  color: #184733;
+  border: 1px solid #98b6a7;
 }
 
 .full-data {

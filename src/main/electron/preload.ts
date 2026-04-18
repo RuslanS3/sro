@@ -17,7 +17,8 @@ const automationApi: AutomationApi = {
     };
     ipcRenderer.on(IPC_CHANNELS.DPPO_PROGRESS, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.DPPO_PROGRESS, wrapped);
-  }
+  },
+  openXmlPath: (xmlPath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_XML_PATH, xmlPath)
 };
 
 contextBridge.exposeInMainWorld('automationApi', automationApi);

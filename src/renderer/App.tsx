@@ -5,7 +5,6 @@ import type {
 } from '../shared/justice-company.contracts';
 import type {
   DppoPayload,
-  DppoProgressEvent,
   GenerateDppoXmlResult
 } from '../shared/dppo.contracts';
 
@@ -76,17 +75,28 @@ function statusMessage(result: GetCompanyByIcoResult | null): string {
 
   switch (result.status) {
     case 'success':
-      return 'Company data loaded successfully.';
+      return 'Data společnosti byla úspěšně načtena.';
     case 'not_found':
-      return 'Company not found for entered IČO.';
+      return 'Společnost pro zadané IČO nebyla nalezena.';
     case 'multiple_results':
-      return 'More than one company found. Please refine selection later.';
+      return 'Nalezeno více společností. Upřesněte výběr.';
     case 'parse_error':
       return result.message;
     default:
-      return 'Unknown status.';
+      return 'Neznámý stav.';
   }
 }
+
+const PROGRESS_LABELS: Record<UiProgressEvent['step'], string> = {
+  validating_input: 'Kontrola IČO',
+  opening_registry: 'Otevírání rejstříku',
+  searching_company: 'Vyhledávání společnosti',
+  opening_detail_page: 'Otevírání detailu společnosti',
+  parsing_data: 'Čtení údajů',
+  normalizing_data: 'Příprava strukturovaných dat',
+  preparing_preview: 'Příprava náhledu',
+  done: 'Hotovo'
+};
 
 function initialDppoForm(): DppoFormState {
   return {
@@ -147,12 +157,9 @@ export function App(): JSX.Element {
   const [progress, setProgress] = useState<UiProgressEvent[]>([]);
   const [result, setResult] = useState<GetCompanyByIcoResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeDataTab, setActiveDataTab] = useState<'normalized' | 'raw' | 'mapped' | 'source'>('normalized');
-
   const [dppoForm, setDppoForm] = useState<DppoFormState>(initialDppoForm());
   const [showBrowser, setShowBrowser] = useState(true);
   const [isDppoLoading, setIsDppoLoading] = useState(false);
-  const [dppoProgress, setDppoProgress] = useState<DppoProgressEvent[]>([]);
   const [dppoResult, setDppoResult] = useState<GenerateDppoXmlResult | null>(null);
 
   useEffect(() => {
@@ -166,16 +173,6 @@ export function App(): JSX.Element {
 
     return window.automationApi.onProgress((event) => {
       setProgress((prev) => [...prev, event]);
-    });
-  }, [isElectronRuntime]);
-
-  useEffect(() => {
-    if (!isElectronRuntime) {
-      return;
-    }
-
-    return window.automationApi.onDppoProgress((event) => {
-      setDppoProgress((prev) => [...prev, event]);
     });
   }, [isElectronRuntime]);
 
@@ -204,9 +201,7 @@ export function App(): JSX.Element {
     setIsLoading(true);
     setResult(null);
     setProgress([]);
-    setActiveDataTab('normalized');
     setDppoResult(null);
-    setDppoProgress([]);
 
     try {
       const response = await window.automationApi.fetchCompanyByIco({ ico });
@@ -231,6 +226,16 @@ export function App(): JSX.Element {
     };
   }, [result]);
 
+  const progressItems = useMemo(() => {
+    const unique = new Map<UiProgressEvent['step'], UiProgressEvent>();
+    for (const item of progress) {
+      unique.set(item.step, item);
+    }
+    return Array.from(unique.values());
+  }, [progress]);
+
+  const currentProgress = progressItems[progressItems.length - 1] ?? null;
+
   const onRunDppo = async (): Promise<void> => {
     if (!isElectronRuntime || result?.status !== 'success') {
       return;
@@ -242,7 +247,7 @@ export function App(): JSX.Element {
     if (!signatoryFirstName || !signatoryLastName) {
       setDppoResult({
         status: 'error',
-        message: 'Signatory first and last name are required before DPPO run.'
+        message: 'Před spuštěním DPPO je nutné vyplnit jméno a příjmení podepisující osoby.'
       });
       return;
     }
@@ -268,6 +273,8 @@ export function App(): JSX.Element {
         signatory_first_name: signatoryFirstName,
         signatory_birth_date: dppoForm.signatory_birth_date || undefined,
         signatory_relationship: 'statutární orgán',
+        signer_mode: 'authorized_person_for_legal_entity',
+        signer_person_type: 'physical',
         business_start_date: dppoForm.registration_from_date,
         business_authorization: dppoForm.business_authorization,
         expected_tax: dppoForm.expected_tax,
@@ -277,7 +284,6 @@ export function App(): JSX.Element {
     };
 
     setIsDppoLoading(true);
-    setDppoProgress([]);
     setDppoResult(null);
 
     try {
@@ -290,6 +296,9 @@ export function App(): JSX.Element {
         }
       });
       setDppoResult(response);
+      if (response.status === 'success' && response.xmlFilePath) {
+        await window.automationApi.openXmlPath(response.xmlFilePath);
+      }
     } finally {
       setIsDppoLoading(false);
     }
@@ -302,8 +311,8 @@ export function App(): JSX.Element {
     return (
       <main className="layout">
         <section className="card">
-          <h1>Company Registry Automation</h1>
-          <p>Initializing application...</p>
+          <h1>Automatizace obchodního rejstříku</h1>
+          <p>Inicializace aplikace...</p>
         </section>
       </main>
     );
@@ -313,12 +322,12 @@ export function App(): JSX.Element {
     return (
       <main className="layout">
         <section className="card">
-          <h1>Company Registry Automation</h1>
+          <h1>Automatizace obchodního rejstříku</h1>
           <p>
-            This UI must be launched inside Electron, not directly in a browser tab.
+            Toto rozhraní musí běžet v Electronu, ne přímo v prohlížeči.
           </p>
           <p>
-            Run <code>npm run dev</code> and use the opened desktop window.
+            Spusťte <code>npm run dev</code> a použijte otevřené desktopové okno.
           </p>
         </section>
       </main>
@@ -328,8 +337,8 @@ export function App(): JSX.Element {
   return (
     <main className="layout">
       <section className="card">
-        <h1>Company Registry Automation</h1>
-        <p>Enter IČO and fetch official data from justice.cz.</p>
+        <h1>Automatizace obchodního rejstříku</h1>
+        <p>Zadejte IČO a načtěte oficiální data z justice.cz.</p>
 
         <label htmlFor="ico">IČO</label>
         <input
@@ -343,30 +352,43 @@ export function App(): JSX.Element {
         />
 
         <button onClick={onFindCompany} disabled={!canRun}>
-          {isLoading ? 'Processing...' : 'Find company data'}
+          {isLoading ? 'Zpracování...' : 'Najít data společnosti'}
         </button>
 
         <div className="status">{statusMessage(result)}</div>
       </section>
 
       <section className="card">
-        <h2>Progress</h2>
-        {progress.length === 0 ? <p>Waiting for action...</p> : null}
-        <ul>
-          {progress.map((item, index) => (
-            <li key={`${item.timestamp}-${index}`}>
-              <strong>{item.step}</strong>: {item.message}
-            </li>
-          ))}
-        </ul>
+        <h2>Průběh</h2>
+        {!currentProgress ? <p>Čeká na spuštění...</p> : null}
+        {currentProgress ? (
+          <div className="progress-panel">
+            <div className="progress-current">
+              <span className="progress-dot" />
+              <strong>{PROGRESS_LABELS[currentProgress.step]}</strong>
+            </div>
+            <p className="progress-message">{currentProgress.message}</p>
+            <div className={`progress-track ${currentProgress.step === 'done' ? 'done' : ''}`}>
+              <span className="progress-shimmer" />
+            </div>
+            <div className="progress-steps">
+              {progressItems.map((item, index) => (
+                <div className="progress-step" key={`${item.timestamp}-${index}`}>
+                  <span className={`progress-step-bullet ${item.step === currentProgress.step ? 'active' : ''}`} />
+                  <span>{PROGRESS_LABELS[item.step]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="card">
-        <h2>Result preview</h2>
+        <h2>Náhled výsledku</h2>
         {preview ? (
           <div className="preview-grid">
             <div>
-              <span>Company name</span>
+              <span>Název společnosti</span>
               <strong>{preview.companyName}</strong>
             </div>
             <div>
@@ -374,28 +396,44 @@ export function App(): JSX.Element {
               <strong>{preview.ico}</strong>
             </div>
             <div>
-              <span>Address</span>
+              <span>Adresa</span>
               <strong>{preview.address}</strong>
             </div>
             <div>
-              <span>Signatory</span>
+              <span>Podepisující osoba</span>
               <strong>{preview.signatory}</strong>
             </div>
             <button type="button" onClick={onRunDppo} disabled={isDppoLoading || !successResult}>
-              {isDppoLoading ? 'Running DPPO...' : 'Confirm and continue (DPPO XML)'}
+              {isDppoLoading ? 'Spouštím DPPO...' : 'Potvrdit a pokračovat (DPPO XML)'}
             </button>
+            {dppoResult ? (
+              <div className="status">
+                {dppoResult.status === 'success'
+                  ? `XML vytvořeno: ${dppoResult.xmlFilePath}`
+                  : `Chyba DPPO: ${dppoResult.message ?? 'Neznámá chyba'}`}
+              </div>
+            ) : null}
+            {dppoResult?.status === 'success' && dppoResult.xmlFilePath ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => window.automationApi.openXmlPath(dppoResult.xmlFilePath!)}
+              >
+                Otevřít XML
+              </button>
+            ) : null}
           </div>
         ) : (
-          <p>Result will appear here after successful extraction.</p>
+          <p>Po úspěšném načtení se zde zobrazí náhled.</p>
         )}
 
         {result?.status === 'multiple_results' ? (
           <div>
-            <p>Detected candidates:</p>
+            <p>Nalezené společnosti:</p>
             <ul>
               {result.candidates.map((candidate) => (
                 <li key={candidate.subjektId}>
-                  {candidate.companyName} ({candidate.ico ?? 'IČO unavailable'})
+                  {candidate.companyName} ({candidate.ico ?? 'IČO není dostupné'})
                 </li>
               ))}
             </ul>
@@ -403,178 +441,6 @@ export function App(): JSX.Element {
         ) : null}
       </section>
 
-      <section className="card card-wide">
-        <h2>DPPO UI Run</h2>
-        <div className="dppo-grid">
-          <label>
-            Finanční úřad
-            <input
-              type="text"
-              value={dppoForm.financial_office}
-              onChange={(e) => setDppoForm((p) => ({ ...p, financial_office: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Územní pracoviště
-            <input
-              type="text"
-              value={dppoForm.territorial_office}
-              onChange={(e) => setDppoForm((p) => ({ ...p, territorial_office: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Place
-            <input
-              type="text"
-              value={dppoForm.submission_place}
-              onChange={(e) => setDppoForm((p) => ({ ...p, submission_place: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Submission date
-            <input
-              type="text"
-              value={dppoForm.submission_date}
-              onChange={(e) => setDppoForm((p) => ({ ...p, submission_date: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Registration from
-            <input
-              type="text"
-              value={dppoForm.registration_from_date}
-              onChange={(e) => setDppoForm((p) => ({ ...p, registration_from_date: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Business authorization
-            <input
-              type="text"
-              value={dppoForm.business_authorization}
-              onChange={(e) => setDppoForm((p) => ({ ...p, business_authorization: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Expected tax (Kč)
-            <input
-              type="text"
-              value={dppoForm.expected_tax}
-              onChange={(e) => setDppoForm((p) => ({ ...p, expected_tax: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Signatory last name
-            <input
-              type="text"
-              value={dppoForm.signatory_last_name}
-              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_last_name: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Signatory first name
-            <input
-              type="text"
-              value={dppoForm.signatory_first_name}
-              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_first_name: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-          <label>
-            Signatory birth date
-            <input
-              type="text"
-              value={dppoForm.signatory_birth_date}
-              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_birth_date: e.target.value }))}
-              disabled={isDppoLoading}
-            />
-          </label>
-        </div>
-
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={showBrowser}
-            onChange={(e) => setShowBrowser(e.target.checked)}
-            disabled={isDppoLoading}
-          />
-          Show EPO browser UI and keep it open after finish
-        </label>
-
-        <button type="button" onClick={onRunDppo} disabled={isDppoLoading || !successResult}>
-          {isDppoLoading ? 'Running DPPO...' : 'Run DPPO and generate XML'}
-        </button>
-
-        {dppoResult ? (
-          <div className="status">
-            {dppoResult.status === 'success'
-              ? `XML generated: ${dppoResult.xmlFilePath}`
-              : `DPPO error: ${dppoResult.message ?? 'Unknown error'}`}
-          </div>
-        ) : null}
-
-        <ul>
-          {dppoProgress.map((item, index) => (
-            <li key={`${item.timestamp}-${index}`}>
-              <strong>{item.level}</strong>: {item.message}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="card card-wide">
-        <h2>Full parsed data</h2>
-        {!successResult ? (
-          <p>Full JSON will appear here after successful extraction.</p>
-        ) : (
-          <div className="full-data">
-            <div className="tab-row">
-              <button
-                type="button"
-                className={`tab-btn ${activeDataTab === 'normalized' ? 'active' : ''}`}
-                onClick={() => setActiveDataTab('normalized')}
-              >
-                Normalized JSON
-              </button>
-              <button
-                type="button"
-                className={`tab-btn ${activeDataTab === 'raw' ? 'active' : ''}`}
-                onClick={() => setActiveDataTab('raw')}
-              >
-                Raw JSON
-              </button>
-              <button
-                type="button"
-                className={`tab-btn ${activeDataTab === 'mapped' ? 'active' : ''}`}
-                onClick={() => setActiveDataTab('mapped')}
-              >
-                Mapped JSON
-              </button>
-              <button
-                type="button"
-                className={`tab-btn ${activeDataTab === 'source' ? 'active' : ''}`}
-                onClick={() => setActiveDataTab('source')}
-              >
-                Source metadata
-              </button>
-            </div>
-
-            <pre className="json-preview">
-              {activeDataTab === 'normalized' && JSON.stringify(successResult.normalizedData, null, 2)}
-              {activeDataTab === 'raw' && JSON.stringify(successResult.rawData, null, 2)}
-              {activeDataTab === 'mapped' && JSON.stringify(successResult.mappedData ?? {}, null, 2)}
-              {activeDataTab === 'source' && JSON.stringify(successResult.source, null, 2)}
-            </pre>
-          </div>
-        )}
-      </section>
     </main>
   );
 }

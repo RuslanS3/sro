@@ -1,4 +1,6 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, shell } from 'electron';
+import path from 'node:path';
+import fs from 'node:fs';
 import { IPC_CHANNELS } from '../../shared/ipc.contracts';
 import type {
   GetCompanyByIcoInput,
@@ -43,5 +45,24 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.GENERATE_DPPO_XML, async (_event, input: GenerateDppoXmlInput) => {
     const logger = new IpcDppoLogger(window);
     return generateDppoXml(input.payload, input.options, logger);
+  });
+
+  ipcMain.removeHandler(IPC_CHANNELS.OPEN_XML_PATH);
+  ipcMain.handle(IPC_CHANNELS.OPEN_XML_PATH, async (_event, xmlPath: string) => {
+    if (!xmlPath || typeof xmlPath !== 'string') {
+      return { ok: false, message: 'Invalid XML path.' };
+    }
+
+    const normalized = path.resolve(xmlPath);
+    if (!fs.existsSync(normalized)) {
+      return { ok: false, message: 'XML file not found.' };
+    }
+
+    shell.showItemInFolder(normalized);
+    const openResult = await shell.openPath(normalized);
+    if (openResult) {
+      return { ok: true, message: openResult };
+    }
+    return { ok: true };
   });
 }

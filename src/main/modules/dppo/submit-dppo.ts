@@ -34,10 +34,34 @@ function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function navigateToSection(page: import('playwright').Page, sectionName: string): Promise<void> {
   await dismissCookieBanner(page);
-  await page.getByRole('link', { name: sectionName, exact: true }).first().click();
-  await page.waitForLoadState('domcontentloaded');
+  const exact = page.getByRole('link', { name: sectionName, exact: true }).first();
+  if (await exact.isVisible().catch(() => false)) {
+    await exact.click();
+    await page.waitForLoadState('domcontentloaded');
+    return;
+  }
+
+  const startsWith = page.getByRole('link', { name: new RegExp(`^${escapeRegExp(sectionName)}(\\s|\\(|$)`, 'i') }).first();
+  if (await startsWith.isVisible().catch(() => false)) {
+    await startsWith.click();
+    await page.waitForLoadState('domcontentloaded');
+    return;
+  }
+
+  const contains = page.locator('a', { hasText: sectionName }).first();
+  if (await contains.isVisible().catch(() => false)) {
+    await contains.click();
+    await page.waitForLoadState('domcontentloaded');
+    return;
+  }
+
+  throw new DppoAutomationError(`Navigation link for section "${sectionName}" was not found.`);
 }
 
 async function recoverFromProtocolErrors(
@@ -168,6 +192,10 @@ export async function generateDppoXml(
 
   try {
     logger.log('info', 'Start DPPO XML generation flow', { route: payload.route });
+    logger.log('info', 'DPPO signatory payload', {
+      signatory_first_name: payload.data.signatory_first_name,
+      signatory_last_name: payload.data.signatory_last_name
+    });
 
     const selectorPage = new FormSelectorPage(page, logger);
     await selectorPage.openAndSelectForm();
