@@ -82,6 +82,7 @@ export class DppoSubmitService {
         signatory_relationship: merged.signatory_relationship,
         business_start_date: merged.business_start_date,
         business_authorization: merged.business_authorization,
+        expected_tax: merged.expected_tax || undefined,
         branch_offices_count: merged.branch_offices_count ? Number.parseInt(merged.branch_offices_count, 10) : undefined,
         premises_count: merged.premises_count ? Number.parseInt(merged.premises_count, 10) : undefined,
         phone: merged.phone || undefined,

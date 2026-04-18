@@ -30,6 +30,7 @@ class IpcDppoLogger implements DppoLogger {
 export function registerIpcHandlers(window: BrowserWindow): void {
   const useCase = new FetchCompanyByIcoUseCase();
 
+  ipcMain.removeHandler(IPC_CHANNELS.FETCH_COMPANY_BY_ICO);
   ipcMain.handle(IPC_CHANNELS.FETCH_COMPANY_BY_ICO, async (_event, input: GetCompanyByIcoInput) => {
     const progress = (progressEvent: UiProgressEvent): void => {
       window.webContents.send(IPC_CHANNELS.PROGRESS, progressEvent);
@@ -38,6 +39,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return useCase.execute(input, progress);
   });
 
+  ipcMain.removeHandler(IPC_CHANNELS.GENERATE_DPPO_XML);
   ipcMain.handle(IPC_CHANNELS.GENERATE_DPPO_XML, async (_event, input: GenerateDppoXmlInput) => {
     const logger = new IpcDppoLogger(window);
     return generateDppoXml(input.payload, input.options, logger);

@@ -16,6 +16,8 @@ type DppoFormState = {
   submission_date: string;
   registration_from_date: string;
   business_authorization: string;
+  expected_tax: string;
+  signatory_birth_date: string;
 };
 
 function toTodayCzDate(): string {
@@ -91,7 +93,9 @@ function initialDppoForm(): DppoFormState {
     submission_place: 'Praze',
     submission_date: toTodayCzDate(),
     registration_from_date: toTodayCzDate(),
-    business_authorization: 'vydáno v ČR'
+    business_authorization: 'vydáno v ČR',
+    expected_tax: '3000000',
+    signatory_birth_date: ''
   };
 }
 
@@ -141,7 +145,8 @@ export function App(): JSX.Element {
     setDppoForm((prev) => ({
       ...prev,
       registration_from_date: normalizeCzDate(result.normalizedData.registration_date),
-      submission_date: prev.submission_date || toTodayCzDate()
+      submission_date: prev.submission_date || toTodayCzDate(),
+      signatory_birth_date: normalizeCzDate(result.normalizedData.statutory_body.persons[0]?.birth_date)
     }));
   }, [result]);
 
@@ -207,9 +212,11 @@ export function App(): JSX.Element {
         country_label: n.address?.country ?? 'Česká republika',
         signatory_last_name: signatory?.last_name ?? '',
         signatory_first_name: signatory?.first_name ?? '',
+        signatory_birth_date: dppoForm.signatory_birth_date || undefined,
         signatory_relationship: 'statutární orgán',
         business_start_date: dppoForm.registration_from_date,
         business_authorization: dppoForm.business_authorization,
+        expected_tax: dppoForm.expected_tax,
         branch_offices_count: 0,
         premises_count: 0
       }
@@ -396,6 +403,24 @@ export function App(): JSX.Element {
               type="text"
               value={dppoForm.business_authorization}
               onChange={(e) => setDppoForm((p) => ({ ...p, business_authorization: e.target.value }))}
+              disabled={isDppoLoading}
+            />
+          </label>
+          <label>
+            Expected tax (Kč)
+            <input
+              type="text"
+              value={dppoForm.expected_tax}
+              onChange={(e) => setDppoForm((p) => ({ ...p, expected_tax: e.target.value }))}
+              disabled={isDppoLoading}
+            />
+          </label>
+          <label>
+            Signatory birth date
+            <input
+              type="text"
+              value={dppoForm.signatory_birth_date}
+              onChange={(e) => setDppoForm((p) => ({ ...p, signatory_birth_date: e.target.value }))}
               disabled={isDppoLoading}
             />
           </label>

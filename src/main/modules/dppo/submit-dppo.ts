@@ -14,21 +14,129 @@ import { OrganizationalUnitsPage } from './pages/organizational-units.page';
 import { GenericNextPage } from './pages/generic-next.page';
 import { FinishPage } from './pages/finish.page';
 import { DppoAutomationError } from './errors';
+import { TaxRegistrationPage } from './pages/tax-registration.page';
+import { dismissCookieBanner } from './utils/epo-ui';
 
-async function dismissCookieBanner(page: import('playwright').Page): Promise<void> {
-  const consentButton = page.locator('input[type="submit"][value="Souhlas se všemi"]').first();
-  if (await consentButton.isVisible().catch(() => false)) {
-    await consentButton.click().catch(() => undefined);
-    await page.waitForTimeout(200);
-  }
+function sanitizeFolderName(input: string): string {
+  return input
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
 }
 
-function defaultDownloadDir(): string {
-  return path.join(os.homedir(), 'Public', 'Varv', 'dppo-xml');
+function defaultDownloadDir(payload: DppoPayload): string {
+  const folderName = sanitizeFolderName(payload.data.company_name || payload.data.ico || 'unknown');
+  return path.join(os.homedir(), 'Downloads', 'xml', folderName);
 }
 
 function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+async function navigateToSection(page: import('playwright').Page, sectionName: string): Promise<void> {
+  await dismissCookieBanner(page);
+  await page.getByRole('link', { name: sectionName, exact: true }).first().click();
+  await page.waitForLoadState('domcontentloaded');
+}
+
+async function recoverFromProtocolErrors(
+  page: import('playwright').Page,
+  payload: DppoPayload,
+  logger: DppoLogger
+): Promise<void> {
+  const finishPage = new FinishPage(page, page.context(), logger);
+  const headerPage = new HeaderPage(page, logger);
+  const taxSubjectPage = new TaxSubjectPage(page, logger);
+  const taxRegistrationPage = new TaxRegistrationPage(page, logger);
+
+  const applyFixOnCurrentPage = async (): Promise<boolean> => {
+    const title = (await page.title()).toLowerCase();
+
+    if (title.includes('záhlaví')) {
+      await headerPage.assertLoaded();
+      await headerPage.fill(payload);
+      return true;
+    }
+
+    if (title.includes('daňový subjekt')) {
+      await taxSubjectPage.assertLoaded();
+      await taxSubjectPage.fillCriticalFields(payload);
+      return true;
+    }
+
+    if (title.includes('daňová registrace')) {
+      await taxRegistrationPage.assertLoaded();
+      await taxRegistrationPage.fill(payload);
+      return true;
+    }
+
+    return false;
+  };
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await finishPage.ensureOnFinishOrProtocol();
+    const protocol = await finishPage.readProtocol();
+
+    if (!protocol.hasCriticalErrors) {
+      await finishPage.goBackFromProtocolToFinish();
+      return;
+    }
+
+    const body = protocol.bodyText.toLowerCase();
+    logger.log('warn', 'Protocol has critical errors, attempting auto-recovery', { attempt });
+
+    let appliedAnyFix = false;
+
+    for (const criticalError of protocol.criticalErrors) {
+      const navigated = await finishPage.clickCriticalError(criticalError);
+      if (!navigated) {
+        continue;
+      }
+
+      const appliedByClick = await applyFixOnCurrentPage();
+      appliedAnyFix = appliedAnyFix || appliedByClick;
+      await page.waitForTimeout(500);
+      await navigateToSection(page, 'Závěr');
+      await finishPage.assertLoaded();
+    }
+
+    if (/finan[cč]n[ií]ho [úu][řr]adu|c[ií]lov[ée]ho finan[cč]n[ií]ho [úu][řr]adu/.test(body)) {
+      await navigateToSection(page, 'Záhlaví');
+      await headerPage.assertLoaded();
+      await headerPage.fill(payload);
+      appliedAnyFix = true;
+    }
+
+    if (/obchodn[ií] jm[eé]no|n[aá]zev pr[aá]vnick[eé] osoby|p[řr][ií]jmen[ií] z[aá]stupce|jm[eé]no z[aá]stupce|datum narozen[ií]/.test(body)) {
+      await navigateToSection(page, 'Daňový subjekt');
+      await taxSubjectPage.assertLoaded();
+      await taxSubjectPage.fillCriticalFields(payload);
+      await page.waitForTimeout(500);
+      appliedAnyFix = true;
+    }
+
+    if (/\\bk[čc]\\b|da[nň]ov[aá] registrace/.test(body)) {
+      await navigateToSection(page, 'Daňová registrace');
+      await taxRegistrationPage.assertLoaded();
+      await taxRegistrationPage.fill(payload);
+      appliedAnyFix = true;
+    }
+
+    if (!appliedAnyFix) {
+      throw new DppoAutomationError('Protocol has critical errors that cannot be auto-recovered by current rules.', {
+        url: page.url(),
+        pageTitle: await page.title()
+      });
+    }
+
+    await navigateToSection(page, 'Závěr');
+  }
+
+  throw new DppoAutomationError('Auto-recovery attempts exceeded. Protocol still contains critical errors.', {
+    url: page.url(),
+    pageTitle: await page.title()
+  });
 }
 
 export async function generateDppoXml(
@@ -36,7 +144,7 @@ export async function generateDppoXml(
   options: GenerateDppoXmlOptions = {},
   logger: DppoLogger = new ConsoleDppoLogger()
 ): Promise<GenerateDppoXmlResult> {
-  const downloadDir = options.downloadDir ?? defaultDownloadDir();
+  const downloadDir = options.downloadDir ?? defaultDownloadDir(payload);
   ensureDir(downloadDir);
 
   const browser = await chromium.launch({
@@ -90,8 +198,9 @@ export async function generateDppoXml(
     await additionalInfoPage.assertLoaded();
     await additionalInfoPage.next();
 
-    const taxRegistrationPage = new GenericNextPage(page, logger, 'Daňová registrace');
+    const taxRegistrationPage = new TaxRegistrationPage(page, logger);
     await taxRegistrationPage.assertLoaded();
+    await taxRegistrationPage.fill(payload);
     await taxRegistrationPage.next();
 
     const branchAppendixPage = new GenericNextPage(page, logger, 'Příloha - Organizační složky obchodního závodu');
@@ -104,6 +213,7 @@ export async function generateDppoXml(
 
     const finishPage = new FinishPage(page, context, logger);
     await finishPage.assertLoaded();
+    await recoverFromProtocolErrors(page, payload, logger);
     const xmlFilePath = await finishPage.exportXml(downloadDir);
 
     logger.log('info', 'DPPO XML generation finished', { xmlFilePath });

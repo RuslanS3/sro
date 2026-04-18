@@ -17,9 +17,11 @@ export type DppoPayload = {
     country_label: string;
     signatory_last_name: string;
     signatory_first_name: string;
+    signatory_birth_date?: string;
     signatory_relationship: string;
     business_start_date: string;
     business_authorization: string;
+    expected_tax?: string;
     branch_offices_count?: number;
     premises_count?: number;
     phone?: string;

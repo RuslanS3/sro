@@ -20,24 +20,58 @@ export class CityPickerComponent {
     await this.page.waitForLoadState('domcontentloaded');
 
     const normalizedCity = cityInput.trim().toUpperCase();
+    const normalizedZip = zip?.replace(/\D/g, '');
     const cityRowCandidates = this.page.locator('a[id^="frm\\:select\\:"]');
 
-    let row = cityRowCandidates.filter({ hasText: normalizedCity });
-    if (zip) {
-      const zipped = cityRowCandidates.filter({ hasText: `${normalizedCity} (PSČ: ${zip})` });
-      if (await zipped.count()) {
-        row = zipped;
-      }
-    }
+    const matches = await cityRowCandidates.evaluateAll(
+      (anchors, params) => {
+        const clean = (value: string): string => value.replace(/\s+/g, ' ').trim().toUpperCase();
+        const out: Array<{ id: string }> = [];
 
-    if (!(await row.count())) {
-      throw new DppoAutomationError('City was not found in EPO city picker.', {
+        for (const anchor of anchors as HTMLAnchorElement[]) {
+          const text = clean(anchor.textContent || '');
+          const parsed = text.match(/^(.+?)\s+\(PSČ:\s*(\d{5})\)$/);
+          if (!parsed) {
+            continue;
+          }
+
+          const city = parsed[1].trim();
+          const rowZip = parsed[2];
+          if (city !== params.city) {
+            continue;
+          }
+
+          if (params.zip && rowZip !== params.zip) {
+            continue;
+          }
+
+          out.push({ id: anchor.id });
+        }
+
+        return out;
+      },
+      { city: normalizedCity, zip: normalizedZip }
+    );
+
+    if (matches.length === 0) {
+      throw new DppoAutomationError(`City "${cityInput}"${zip ? ` (${zip})` : ''} was not found in EPO city picker.`, {
         url: this.page.url(),
         pageTitle: await this.page.title()
       });
     }
 
-    await row.first().click();
+    if (matches.length > 1) {
+      throw new DppoAutomationError(
+        `City picker returned multiple matches for "${cityInput}". Provide ZIP to disambiguate.`,
+        {
+          url: this.page.url(),
+          pageTitle: await this.page.title()
+        }
+      );
+    }
+
+    const targetId = matches[0].id.replace(/"/g, '\\"');
+    await this.page.locator(`[id="${targetId}"]`).click();
     await this.page.locator('#frm\\:vybrat').click();
     await this.page.waitForLoadState('domcontentloaded');
     await this.page.waitForFunction(() => document.title.includes('Daňový subjekt'), undefined, { timeout: 20_000 });

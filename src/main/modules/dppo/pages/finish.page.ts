@@ -5,6 +5,12 @@ import type { DppoLogger } from '../logger';
 import { DppoBasePage } from './base.page';
 import { DppoAutomationError } from '../errors';
 import { ensureDir, saveDownloadTo } from '../utils/downloads';
+import { dismissCookieBanner } from '../utils/epo-ui';
+
+export type ProtocolErrorRow = {
+  linkId?: string;
+  message: string;
+};
 
 export class FinishPage extends DppoBasePage {
   constructor(
@@ -17,6 +23,136 @@ export class FinishPage extends DppoBasePage {
 
   async assertLoaded(): Promise<void> {
     await this.expectTitleContains('Závěr - Přihláška k registraci pro právnické osoby');
+  }
+
+  async ensureOnFinishOrProtocol(): Promise<void> {
+    const title = await this.page.title().catch(() => '');
+    if (title.includes('Závěr - Přihláška k registraci pro právnické osoby')) {
+      return;
+    }
+
+    if (title.includes('Protokol chyb - Přihláška k registraci pro právnické osoby')) {
+      return;
+    }
+
+    throw new DppoAutomationError('Expected to be on Závěr or Protokol chyb page.', {
+      url: this.page.url(),
+      pageTitle: title
+    });
+  }
+
+  async validateProtocol(): Promise<void> {
+    this.logger.log('info', 'Run protocol check on final page');
+    await this.safeClickByValue('Protokol chyb');
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.expectTitleContains('Protokol chyb - Přihláška k registraci pro právnické osoby');
+
+    const bodyText = (await this.page.textContent('body'))?.replace(/\s+/g, ' ').trim() ?? '';
+    const hasCriticalErrors = /Nalezen[eé]\s+kritick[eé]\s+chyby/i.test(bodyText);
+
+    if (hasCriticalErrors) {
+      const marker = bodyText.match(/Nalezen[eé]\s+kritick[eé]\s+chyby[\s\S]{0,900}/i)?.[0] ?? 'Critical protocol errors detected.';
+      throw new DppoAutomationError(`Protocol contains critical errors: ${marker}`, {
+        url: this.page.url(),
+        pageTitle: await this.page.title()
+      });
+    }
+
+    const backButton = this.page.locator('input[type="submit"][value="Zpět"]').first();
+    if (await backButton.isVisible().catch(() => false)) {
+      await backButton.click();
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.expectTitleContains('Závěr - Přihláška k registraci pro právnické osoby');
+    }
+  }
+
+  async readProtocol(): Promise<{ hasCriticalErrors: boolean; bodyText: string; criticalErrorLinkIds: string[]; criticalErrors: ProtocolErrorRow[] }> {
+    this.logger.log('info', 'Run protocol check on final page');
+    const currentTitle = await this.page.title().catch(() => '');
+    if (!currentTitle.includes('Protokol chyb - Přihláška k registraci pro právnické osoby')) {
+      await this.safeClickByValue('Protokol chyb');
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.expectTitleContains('Protokol chyb - Přihláška k registraci pro právnické osoby');
+    }
+
+    const protocolData = await this.page.evaluate(() => {
+      const bodyText = (document.body.textContent ?? '').replace(/\s+/g, ' ').trim();
+      const errorAnchors = Array.from(document.querySelectorAll('a[id^="frm:kritickeT:"]'))
+        .filter((anchor) => (anchor.textContent ?? '').trim().length > 0);
+      const criticalErrorLinkIds = Array.from(document.querySelectorAll('a[id^="frm:kritickeT:"]'))
+        .filter((anchor) => (anchor.textContent ?? '').trim().length > 0)
+        .map((anchor) => anchor.id);
+
+      const criticalErrors: Array<{ linkId?: string; message: string }> = errorAnchors.map((anchor) => ({
+        linkId: anchor.id,
+        message: (anchor.textContent ?? '').replace(/\s+/g, ' ').trim()
+      }));
+
+      const tableRows = Array.from(document.querySelectorAll('table tr'));
+      for (const row of tableRows as HTMLTableRowElement[]) {
+        const rowText = (row.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (!rowText) {
+          continue;
+        }
+        if (!/mus[ií]\s+b[ýy]t\s+vypln[ěe]no/i.test(rowText)) {
+          continue;
+        }
+        if (criticalErrors.some((item) => item.message === rowText)) {
+          continue;
+        }
+        criticalErrors.push({ linkId: undefined, message: rowText });
+      }
+
+      const hasCriticalErrors = /Nalezen[eé]\s+kritick[eé]\s+chyby/i.test(bodyText);
+      return { bodyText, hasCriticalErrors, criticalErrorLinkIds, criticalErrors };
+    });
+
+    return protocolData;
+  }
+
+  async goBackFromProtocolToFinish(): Promise<void> {
+    const backButton = this.page.locator('input[type="submit"][value="Zpět"]').first();
+    if (await backButton.isVisible().catch(() => false)) {
+      await backButton.click();
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.expectTitleContains('Závěr - Přihláška k registraci pro právnické osoby');
+      return;
+    }
+
+    const finishLink = this.page.getByRole('link', { name: 'Závěr', exact: true }).first();
+    if (await finishLink.isVisible().catch(() => false)) {
+      await finishLink.click();
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.expectTitleContains('Závěr - Přihláška k registraci pro právnické osoby');
+    }
+  }
+
+  async clickCriticalError(error: ProtocolErrorRow): Promise<boolean> {
+    await dismissCookieBanner(this.page);
+    const beforeUrl = this.page.url();
+    const beforeTitle = await this.page.title().catch(() => '');
+
+    if (error.linkId) {
+      const safeId = error.linkId.replace(/"/g, '\\"');
+      const byId = this.page.locator(`[id="${safeId}"]`).first();
+      if (await byId.isVisible().catch(() => false)) {
+        await byId.click({ force: true }).catch(() => undefined);
+      }
+    }
+
+    if (this.page.url() === beforeUrl) {
+      const row = this.page.locator('tr', { hasText: error.message }).first();
+      if (await row.isVisible().catch(() => false)) {
+        await row.click({ force: true }).catch(() => undefined);
+      }
+    }
+
+    await this.page.waitForLoadState('domcontentloaded').catch(() => undefined);
+    await this.page.waitForTimeout(350);
+    const afterUrl = this.page.url();
+    const afterTitle = await this.page.title().catch(() => '');
+
+    return afterUrl !== beforeUrl || afterTitle !== beforeTitle;
   }
 
   async exportXml(downloadDir: string): Promise<string> {

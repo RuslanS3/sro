@@ -22,7 +22,7 @@ function createMainWindow(): BrowserWindow {
   if (isDev) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL as string);
   } else {
-    void mainWindow.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'));
+    void mainWindow.loadFile(path.join(__dirname, '../../../renderer/index.html'));
   }
 
   return mainWindow;
