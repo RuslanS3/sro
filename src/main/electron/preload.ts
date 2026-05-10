@@ -18,6 +18,16 @@ const automationApi: AutomationApi = {
     ipcRenderer.on(IPC_CHANNELS.DPPO_PROGRESS, wrapped);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.DPPO_PROGRESS, wrapped);
   },
+  generateDphRegistration: (input) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GENERATE_DPH_REGISTRATION, input),
+  onDphRegistrationProgress: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      listener(payload as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.DPH_REGISTRATION_PROGRESS, wrapped);
+    return () =>
+      ipcRenderer.removeListener(IPC_CHANNELS.DPH_REGISTRATION_PROGRESS, wrapped);
+  },
   openXmlPath: (xmlPath) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_XML_PATH, xmlPath)
 };
 

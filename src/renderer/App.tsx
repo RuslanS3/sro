@@ -7,6 +7,11 @@ import type {
   DppoPayload,
   GenerateDppoXmlResult
 } from '../shared/dppo.contracts';
+import type {
+  DphRegistrationPayload,
+  GenerateDphRegistrationResult
+} from '../shared/dph-registration.contracts';
+import { pickRandomVoluntaryReason } from '../shared/dph-voluntary-reasons';
 
 type DppoFormState = {
   financial_office: string;
@@ -20,6 +25,153 @@ type DppoFormState = {
   signatory_first_name: string;
   signatory_birth_date: string;
 };
+
+type DphFormState = {
+  voluntary_reason: string;
+  expected_annual_turnover: string;
+  registration_reason_label: string;
+  bank_prefix: string;
+  bank_number: string;
+  bank_code: string;
+  notification_email: string;
+  /** Lower signature block — required even when justice has no jednatel. */
+  authorized_first_name: string;
+  authorized_last_name: string;
+  authorized_relationship: string;
+};
+
+/**
+ * Strip a Czech city name of any administrative suffix (district, dash, comma)
+ * and ASCII-fold for selectById's partial label match.
+ *
+ *   "Praha 1"          → "PRAHA 1"
+ *   "Brno-střed"       → "BRNO"
+ *   "Olomouc, Hodolany" → "OLOMOUC"
+ *   "České Budějovice 4" → "ČESKÉ BUDĚJOVICE 4"
+ */
+function cityToOfficeLabel(city: string): string {
+  return city
+    .replace(/\s*[-,–]\s*.*$/, '')
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Derive Czech tax-office territorial unit ("Územní pracoviště") from a
+ * company address. Strategy:
+ *   1. Prague: explicit "Praha N" district mapping by city or PSČ prefix.
+ *   2. Other cities: uppercased city name — base.page selectById will fall
+ *      back to a partial-label match so "BRNO" finds "BRNO I", etc.
+ */
+function deriveTerritorialOffice(
+  city?: string,
+  zip?: string
+): string | null {
+  if (city) {
+    const m = city.match(/Praha\s*(\d{1,2})/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 1 && n <= 10) return `PRAHA ${n}`;
+    }
+  }
+  if (zip) {
+    const clean = zip.replace(/\s+/g, '');
+    if (/^\d{5}$/.test(clean)) {
+      const prefix = parseInt(clean.slice(0, 2), 10);
+      // Prague PSČ map: 11x→Praha 1, 12x→Praha 2, ..., 18x→Praha 8, 19x→Praha 9, 10x→Praha 10
+      if (prefix === 10) return 'PRAHA 10';
+      if (prefix >= 11 && prefix <= 19) return `PRAHA ${prefix - 10}`;
+    }
+  }
+
+  // Non-Prague fallback: use the city name and rely on the select's
+  // case-insensitive partial-label match.
+  if (city && city.trim()) {
+    return cityToOfficeLabel(city);
+  }
+  return null;
+}
+
+/**
+ * Derive Czech tax-office financial region ("Finanční úřad pro") from a
+ * company address by PSČ first digit (which roughly corresponds to a kraj):
+ *
+ *   1xx xx → HLAVNÍ MĚSTO PRAHA / STŘEDOČESKÝ KRAJ (best-guess)
+ *   2xx xx → STŘEDOČESKÝ KRAJ
+ *   3xx xx → JIHOČESKÝ / PLZEŇSKÝ
+ *   4xx xx → ÚSTECKÝ / KARLOVARSKÝ
+ *   5xx xx → KRÁLOVÉHRADECKÝ / PARDUBICKÝ / LIBERECKÝ
+ *   6xx xx → JIHOMORAVSKÝ / KRAJ VYSOČINA
+ *   7xx xx → ZLÍNSKÝ / OLOMOUCKÝ
+ *   8xx xx → MORAVSKOSLEZSKÝ
+ *
+ * Where the first digit alone is ambiguous (3xx, 4xx, 5xx, 6xx, 7xx) we use
+ * the second digit when possible. Prague gets a hard-coded match because
+ * city name contains "Praha". Returns null when we cannot confidently
+ * decide — caller keeps the existing default.
+ */
+function deriveFinancialOffice(
+  city?: string,
+  zip?: string
+): string | null {
+  if (city && /Praha/i.test(city)) return 'HLAVNÍ MĚSTO PRAHA';
+
+  if (!zip) return null;
+  const clean = zip.replace(/\s+/g, '');
+  if (!/^\d{5}$/.test(clean)) return null;
+
+  const d1 = clean[0];
+  const d2 = clean[1];
+
+  // 1xx xx — Praha region (10–19) and Středočeský (20–29 via 2x); 1xx itself is Praha.
+  if (d1 === '1') return 'HLAVNÍ MĚSTO PRAHA';
+  if (d1 === '2') return 'STŘEDOČESKÝ KRAJ';
+  if (d1 === '3') {
+    // 30–35 Plzeňský, 37–39 Jihočeský
+    if (['3', '4', '5'].includes(d2)) return 'PLZEŇSKÝ KRAJ';
+    if (['7', '8', '9'].includes(d2)) return 'JIHOČESKÝ KRAJ';
+    return null;
+  }
+  if (d1 === '4') {
+    // 40–44 Ústecký, 35–36 Karlovarský but those are in 3x; 4x mostly Ústecký
+    return 'ÚSTECKÝ KRAJ';
+  }
+  if (d1 === '5') {
+    // 50–55 Královéhradecký, 53–57 Pardubický, 46–47 Liberecký (in 4x), 58–59 Vysočina
+    if (['0', '1', '2', '3', '4'].includes(d2)) return 'KRÁLOVÉHRADECKÝ KRAJ';
+    if (['3', '4', '5', '6', '7'].includes(d2)) return 'PARDUBICKÝ KRAJ';
+    return null;
+  }
+  if (d1 === '6') {
+    // 60–69 Brno (Jihomoravský), 58–59 Vysočina handled above
+    return 'JIHOMORAVSKÝ KRAJ';
+  }
+  if (d1 === '7') {
+    // 70–73 Moravskoslezský, 74–76 Olomoucký, 76–77 Zlínský
+    if (['0', '1', '2', '3'].includes(d2)) return 'MORAVSKOSLEZSKÝ KRAJ';
+    if (['4', '5'].includes(d2)) return 'OLOMOUCKÝ KRAJ';
+    if (['6', '7'].includes(d2)) return 'ZLÍNSKÝ KRAJ';
+    return null;
+  }
+  if (d1 === '8') return 'MORAVSKOSLEZSKÝ KRAJ';
+
+  return null;
+}
+
+function initialDphForm(): DphFormState {
+  return {
+    voluntary_reason: pickRandomVoluntaryReason(),
+    expected_annual_turnover: '5000000',
+    registration_reason_label: '§ 6f odst. 1',
+    bank_prefix: '',
+    bank_number: '',
+    bank_code: '',
+    notification_email: '',
+    authorized_first_name: '',
+    authorized_last_name: '',
+    authorized_relationship: 'STATUTÁRNÍ ORGÁN'
+  };
+}
 
 function toTodayCzDate(): string {
   const now = new Date();
@@ -151,16 +303,19 @@ function resolveSignatoryFromNormalized(result: GetCompanyByIcoResult): {
   };
 }
 
-export function App(): JSX.Element {
+export function App() {
   const [isElectronRuntime, setIsElectronRuntime] = useState<boolean | null>(null);
   const [ico, setIco] = useState('');
   const [progress, setProgress] = useState<UiProgressEvent[]>([]);
   const [result, setResult] = useState<GetCompanyByIcoResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [dppoForm, setDppoForm] = useState<DppoFormState>(initialDppoForm());
-  const [showBrowser, setShowBrowser] = useState(true);
+  const [showBrowser] = useState(true);
   const [isDppoLoading, setIsDppoLoading] = useState(false);
   const [dppoResult, setDppoResult] = useState<GenerateDppoXmlResult | null>(null);
+  const [dphForm, setDphForm] = useState<DphFormState>(initialDphForm());
+  const [isDphLoading, setIsDphLoading] = useState(false);
+  const [dphResult, setDphResult] = useState<GenerateDphRegistrationResult | null>(null);
 
   useEffect(() => {
     setIsElectronRuntime(typeof window !== 'undefined' && typeof window.automationApi !== 'undefined');
@@ -182,6 +337,9 @@ export function App(): JSX.Element {
     }
 
     const signatory = resolveSignatoryFromNormalized(result);
+    const addr = result.normalizedData.address;
+    const derivedTerritorial = deriveTerritorialOffice(addr?.city, addr?.zip);
+    const derivedFinancial = deriveFinancialOffice(addr?.city, addr?.zip);
 
     setDppoForm((prev) => ({
       ...prev,
@@ -189,7 +347,19 @@ export function App(): JSX.Element {
       submission_date: prev.submission_date || toTodayCzDate(),
       signatory_first_name: signatory.first,
       signatory_last_name: signatory.last,
-      signatory_birth_date: normalizeCzDate(signatory.birthDate)
+      signatory_birth_date: normalizeCzDate(signatory.birthDate),
+      // Auto-derive tax offices from the company address (PSČ / city). User
+      // can still override via the new UI inputs below.
+      financial_office: derivedFinancial ?? prev.financial_office,
+      territorial_office: derivedTerritorial ?? prev.territorial_office
+    }));
+
+    // Mirror signatory into the DPH form so the user can edit it independently
+    // (e.g. when justice has no jednatel — fresh PO with no statutory body yet).
+    setDphForm((prev) => ({
+      ...prev,
+      authorized_first_name: prev.authorized_first_name || signatory.first,
+      authorized_last_name: prev.authorized_last_name || signatory.last
     }));
   }, [result]);
 
@@ -301,6 +471,93 @@ export function App(): JSX.Element {
       }
     } finally {
       setIsDppoLoading(false);
+    }
+  };
+
+  const onRunDph = async (): Promise<void> => {
+    if (!isElectronRuntime || result?.status !== 'success') {
+      return;
+    }
+
+    const n = result.normalizedData;
+    const signatoryFirstName = dphForm.authorized_first_name.trim();
+    const signatoryLastName = dphForm.authorized_last_name.trim();
+    const signatoryRelationship =
+      dphForm.authorized_relationship.trim() || 'STATUTÁRNÍ ORGÁN';
+    if (!signatoryFirstName || !signatoryLastName) {
+      setDphResult({
+        status: 'error',
+        message:
+          'Před spuštěním DPH je nutné vyplnit Jméno a Příjmení oprávněné osoby (podpisová doložka).'
+      });
+      return;
+    }
+
+    const bankNumber = dphForm.bank_number.trim();
+    const bankCode = dphForm.bank_code.trim();
+    const bankAccounts =
+      bankNumber && bankCode
+        ? [
+            {
+              prefix: dphForm.bank_prefix.trim() || undefined,
+              number: bankNumber,
+              bank_code: bankCode,
+              publish_in_public_register: true
+            }
+          ]
+        : [];
+
+    const payload: DphRegistrationPayload = {
+      route: 'dph-registration',
+      data: {
+        financial_office: dppoForm.financial_office,
+        territorial_office: dppoForm.territorial_office,
+        dic: `CZ${n.ico ?? ''}`,
+        subject_type: 'P',
+        registration_modes: ['plátce'],
+        company_name: n.company_name ?? '',
+        street: n.address?.street ?? '',
+        house_number: n.address?.house_number ?? '',
+        orientation_number: n.address?.orientation_number ?? '',
+        city: n.address?.city ?? '',
+        zip: n.address?.zip ?? '',
+        country_label: n.address?.country ?? 'ČESKÁ REPUBLIKA',
+        country_code: 'CZ',
+        actual_seat_same_as_registered: true,
+        email: undefined,
+        phone: undefined,
+        registration_reason_label: dphForm.registration_reason_label,
+        voluntary_registration_reason: dphForm.voluntary_reason,
+        expected_annual_turnover: dphForm.expected_annual_turnover,
+        bank_accounts: bankAccounts,
+        refund_account: bankAccounts[0],
+        signature: {
+          authorized_first_name: signatoryFirstName,
+          authorized_last_name: signatoryLastName,
+          authorized_relationship: signatoryRelationship
+        },
+        notification_email: dphForm.notification_email || undefined
+      }
+    };
+
+    setIsDphLoading(true);
+    setDphResult(null);
+
+    try {
+      const response = await window.automationApi.generateDphRegistration({
+        payload,
+        options: {
+          headless: !showBrowser,
+          slowMo: showBrowser ? 150 : undefined,
+          keepBrowserOpen: showBrowser
+        }
+      });
+      setDphResult(response);
+      if (response.status === 'success' && response.xmlFilePath) {
+        await window.automationApi.openXmlPath(response.xmlFilePath);
+      }
+    } finally {
+      setIsDphLoading(false);
     }
   };
 
@@ -422,6 +679,216 @@ export function App(): JSX.Element {
                 Otevřít XML
               </button>
             ) : null}
+
+            <hr style={{ width: '100%', margin: '16px 0', borderColor: '#eee' }} />
+            <strong style={{ width: '100%' }}>
+              Registrace DPH (Přihláška k registraci k dani z přidané hodnoty)
+            </strong>
+
+            <div>
+              <span>Finanční úřad pro</span>
+              <input
+                type="text"
+                value={dppoForm.financial_office}
+                onChange={(e) =>
+                  setDppoForm((p) => ({ ...p, financial_office: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Územní pracoviště v, ve, pro</span>
+              <input
+                type="text"
+                value={dppoForm.territorial_office}
+                onChange={(e) =>
+                  setDppoForm((p) => ({ ...p, territorial_office: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+
+            <div>
+              <span>
+                Jméno oprávněné osoby (podpis) *
+                {!dphForm.authorized_first_name ? (
+                  <em style={{ color: '#a33', marginLeft: 6 }}>
+                    (justice nevrátil jednatela — vyplňte ručně)
+                  </em>
+                ) : null}
+              </span>
+              <input
+                type="text"
+                value={dphForm.authorized_first_name}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, authorized_first_name: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Příjmení oprávněné osoby (podpis) *</span>
+              <input
+                type="text"
+                value={dphForm.authorized_last_name}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, authorized_last_name: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Vztah k právnické osobě</span>
+              <input
+                type="text"
+                value={dphForm.authorized_relationship}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, authorized_relationship: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+
+            <div>
+              <span>Důvod podle § (06)</span>
+              <input
+                type="text"
+                value={dphForm.registration_reason_label}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, registration_reason_label: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Důvod dobrovolné registrace (09)</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  style={{ flex: 1 }}
+                  value={dphForm.voluntary_reason}
+                  onChange={(e) =>
+                    setDphForm((p) => ({ ...p, voluntary_reason: e.target.value }))
+                  }
+                  disabled={isDphLoading}
+                />
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  title="Vybrat jiný náhodný text"
+                  onClick={() =>
+                    setDphForm((p) => ({ ...p, voluntary_reason: pickRandomVoluntaryReason() }))
+                  }
+                  disabled={isDphLoading}
+                >
+                  Náhodný
+                </button>
+              </div>
+            </div>
+            <div>
+              <span>Předpokládaný roční obrat (09a)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={dphForm.expected_annual_turnover}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, expected_annual_turnover: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Bankovní účet — předčíslí</span>
+              <input
+                type="text"
+                value={dphForm.bank_prefix}
+                onChange={(e) => setDphForm((p) => ({ ...p, bank_prefix: e.target.value }))}
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Bankovní účet — číslo účtu</span>
+              <input
+                type="text"
+                value={dphForm.bank_number}
+                onChange={(e) => setDphForm((p) => ({ ...p, bank_number: e.target.value }))}
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>Bankovní účet — kód banky</span>
+              <input
+                type="text"
+                value={dphForm.bank_code}
+                onChange={(e) => setDphForm((p) => ({ ...p, bank_code: e.target.value }))}
+                disabled={isDphLoading}
+              />
+            </div>
+            <div>
+              <span>E-mail pro notifikaci</span>
+              <input
+                type="email"
+                value={dphForm.notification_email}
+                onChange={(e) =>
+                  setDphForm((p) => ({ ...p, notification_email: e.target.value }))
+                }
+                disabled={isDphLoading}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={onRunDph}
+              disabled={isDphLoading || !successResult}
+            >
+              {isDphLoading ? 'Spouštím DPH...' : 'Vygenerovat registraci DPH (PDF + XML)'}
+            </button>
+            {dphResult ? (
+              <div className="status">
+                {dphResult.status === 'success'
+                  ? `Hotovo. PDF: ${dphResult.pdfFilePath ?? '-'} | XML: ${dphResult.xmlFilePath ?? '-'}`
+                  : `Chyba DPH: ${dphResult.message ?? 'Neznámá chyba'}`}
+              </div>
+            ) : null}
+            {dphResult?.protocolErrors && dphResult.protocolErrors.length > 0 ? (
+              <details style={{ width: '100%', marginTop: 8 }}>
+                <summary>
+                  Protokol chyb ({dphResult.protocolErrors.length} položek):{' '}
+                  {dphResult.protocolErrors.filter((e) => e.severity === 'critical').length}
+                  {' '}kritických,{' '}
+                  {dphResult.protocolErrors.filter((e) => e.severity === 'serious').length}
+                  {' '}propustných závažných,{' '}
+                  {dphResult.protocolErrors.filter((e) => e.severity === 'minor').length}
+                  {' '}propustných
+                </summary>
+                <ul style={{ marginTop: 8 }}>
+                  {dphResult.protocolErrors.map((e, idx) => (
+                    <li key={idx}>
+                      <strong>[{e.severity}]</strong> {e.field} — {e.message}
+                      {e.code ? ` (kód ${e.code})` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+            {dphResult?.status === 'success' && dphResult.xmlFilePath ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => window.automationApi.openXmlPath(dphResult.xmlFilePath!)}
+              >
+                Otevřít XML
+              </button>
+            ) : null}
+            {dphResult?.status === 'success' && dphResult.pdfFilePath ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => window.automationApi.openXmlPath(dphResult.pdfFilePath!)}
+              >
+                Otevřít PDF
+              </button>
+            ) : null}
           </div>
         ) : (
           <p>Po úspěšném načtení se zde zobrazí náhled.</p>
@@ -444,3 +911,4 @@ export function App(): JSX.Element {
     </main>
   );
 }
+

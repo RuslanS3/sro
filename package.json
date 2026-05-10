@@ -14,7 +14,8 @@
     "build:renderer": "vite build",
     "start": "electron .",
     "clean": "rimraf dist",
-    "package:mac": "npm run build && electron-builder --mac dmg zip --publish never"
+    "playwright:install": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",
+    "package:mac": "npm run build && npm run playwright:install && electron-builder --mac dmg zip --publish never"
   },
   "dependencies": {
     "playwright": "^1.54.1",
@@ -39,8 +40,13 @@
     "appId": "com.varv.automation",
     "productName": "Varv Office Automation",
     "asar": true,
+    "asarUnpack": [
+      "**/node_modules/playwright-core/**",
+      "**/node_modules/playwright/**"
+    ],
     "files": [
       "dist/**/*",
+      "node_modules/**/*",
       "package.json"
     ],
     "directories": {
@@ -51,6 +57,8 @@
     },
     "mac": {
       "category": "public.app-category.business",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "target": [
         "dmg",
         "zip"
